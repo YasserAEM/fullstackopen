@@ -1,6 +1,8 @@
+require('dotenv').config()
 const express = require('express')
 const morgan = require('morgan')
 const app = express()
+const Person = require('./models/person.js')
 
 app.use(express.static('dist'))
 
@@ -11,78 +13,68 @@ morgan.token('body', (req, res) => JSON.stringify(req.body))
 app.use(morgan('tiny', {skip: (req, res) => req.method === "POST"}))
 app.use(morgan(':method :url :status :res[content-length] - :response-time ms :body', {skip: (req, res) => req.method !== "POST"}))
 
-let persons = [
-    { 
-      "id": "1",
-      "name": "Arto Hellas",
-      "number": "040-123456"
-    },
-    { 
-      "id": "2",
-      "name": "Ada Lovelace", 
-      "number": "39-44-5323523"
-    },
-    { 
-      "id": "3",
-      "name": "Dan Abramov", 
-      "number": "12-43-234345"
-    },
-    { 
-      "id": "4",
-      "name": "Mary Poppendieck", 
-      "number": "39-23-6423122"
-    }
-]
 
 app.get('/api/persons', (request, response) => {
-    response.json(persons)
+    Person.find().then(persons => {
+        response.json(persons)
+    })
 })
 
 app.get('/info', (request, response) => {
-    response.send(`<p>Phonebook has info for ${persons.length} people</p><p>${Date()}</p>`)
+    response.send(`<p>Phonebook has info for ${Person.find.length} people</p>
+                   <p>${Date()}</p>`)
 })
 
-app.get('/api/persons/:id', (request, response) => {
+app.get('/api/persons/:id', (request, response, next) => {
     const id = request.params.id
-    const person = persons.find(p => p.id === id)
-
-    if (person) {
-        response.json(person)
-    } else {
-        response.status(404).end()
-    }
+    Person.findById(id)
+        .then(person => {
+            if (!person) {
+                response.status(404).end()
+            } else {
+                response.json(person)
+            }
+        })
+        .catch(error => next(error))
 })
 
-app.delete('/api/persons/:id', (request, response) => {
+app.delete('/api/persons/:id', (request, response, next) => {
     const id = request.params.id
-    persons = persons.filter(p => p.id !== id)
 
-    response.status(204).end()
+    Person.findByIdAndDelete(id)
+        .then(result => {
+            response.status(204).end()
+        })
+        .catch(error => next(error))
 })
 
-app.post('/api/persons', (req, res) => {
+app.post('/api/persons', (req, res, next) => {
     const body = req.body
 
-    if (!body.name || !body.number) {
-        return res.status(400).json({
-            error: 'name or number missing'
-        })
-    }
-    if (persons.map(p => p.name).includes(body.name)) {
-        return res.status(400).json({
-            error: 'name must be unique'
-        })
-    }
-
-    const person = {
+    const person = new Person({
         name: body.name,
-        number: body.number,
-        id: String(Math.floor(Math.random() * 1000))
-    }
+        number: body.number
+    })
+    
+    person.save()
+        .then(savedPerson => {
+        res.json(savedPerson)
+        })
+        .catch(error => next(error))
+})
 
-    persons = persons.concat(person)
+app.put('/api/persons/:id', (req, res, next) => {
+    const {name, number} = req.body
 
-    res.json(person)
+    Person.findById(req.params.id)
+        .then(person => {
+            person.name = name
+            person.number = number
+
+            person.save().then(updatedPerson => {
+                res.json(updatedPerson)
+            })
+        })
 })
 
 const unknownEndpoint = (req, res) => {
@@ -90,8 +82,20 @@ const unknownEndpoint = (req, res) => {
 }
 app.use(unknownEndpoint)
 
+const errorHandler = (error, req, res, next) => {
+    console.log(error)
 
-const PORT = process.env.PORT || 3001
+    if (error.name === 'CastError') {
+        res.status(400).send({ error: 'malformatted id' })
+    } else if (error.name ==='ValidationError') {
+        res.status(400).json({error: error.message})
+    }
+
+    next(error)
+}
+app.use(errorHandler)
+
+const PORT = process.env.PORT
 app.listen(PORT, () => {
     console.log(`server listening on port ${PORT}`)
 })
